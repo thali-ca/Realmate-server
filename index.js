@@ -60,7 +60,7 @@ async function callGroq(prompt) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_KEY}` },
       body: JSON.stringify({
-        model: 'llama3-8b-8192',
+        model: 'llama-3.3-70b-versatile',
         max_tokens: 1000,
         messages: [
           { role: 'system', content: 'You are a helpful real estate AI assistant. Be concise and professional.' },
