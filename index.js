@@ -4,7 +4,13 @@ const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(express.json());
-app.use((req, res, next) => { res.header('Access-Control-Allow-Origin', '*'); res.header('Access-Control-Allow-Headers', 'Content-Type'); res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS'); if (req.method === 'OPTIONS') return res.sendStatus(200); next(); });
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -18,24 +24,31 @@ app.get('/', (req, res) => {
   res.json({ status: 'RealMate server is running' });
 });
 
-// Receive a new lead
+// General AI endpoint — used by dashboard panel
+app.post('/ai', async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt) return res.status(400).json({ error: 'No prompt provided' });
+  const reply = await callGroq(prompt);
+  res.json({ reply });
+});
+
+// Receive a new lead + generate reply
 app.post('/lead', async (req, res) => {
-  const { name, email, source, message, interest, budget, intent, urgency } = req.body;
+  const { name, email, source, message, interest, budget, intent, urgency, agent_id } = req.body;
 
   const { data: lead, error } = await supabase
     .from('leads')
-    .insert([{ name, email, source, message, interest, budget, intent, urgency }])
+    .insert([{ name, email, source, message, interest, budget, intent, urgency, agent_id }])
     .select()
     .single();
 
   if (error) return res.status(500).json({ error: error.message });
 
-  const aiReply = await generateReply({ name, source, message, interest, budget, intent });
+  const aiReply = await callGroq(
+    `You are top real estate agent ${agent_id||'Sarah'}. A new lead messaged you. Write a warm helpful reply.\n\nSource: ${source==='fb'?'Facebook Messenger':'Email'}\nName: ${name}\nMessage: "${message}"\nIntent: ${intent}\nBudget: ${budget}\n\nRules: sound human, 3-4 short paragraphs, ask ONE qualifying question, sign off as Sarah.`
+  );
 
-  await supabase
-    .from('leads')
-    .update({ ai_reply: aiReply })
-    .eq('id', lead.id);
+  await supabase.from('leads').update({ ai_reply: aiReply }).eq('id', lead.id);
 
   res.json({ success: true, lead_id: lead.id, ai_reply: aiReply });
 });
@@ -63,7 +76,8 @@ app.patch('/lead/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-async function generateReply({ name, source, message, interest, budget, intent }) {
+// Groq call — used everywhere
+async function callGroq(prompt) {
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -75,30 +89,15 @@ async function generateReply({ name, source, message, interest, budget, intent }
         model: 'llama3-8b-8192',
         max_tokens: 1000,
         messages: [
-          {
-            role: 'system',
-            content: 'You are a top real estate agent named Sarah. Write warm, helpful, human replies to leads. Never sound like a bot.'
-          },
-          {
-            role: 'user',
-            content: `A new lead just messaged you.
-
-Source: ${source === 'fb' ? 'Facebook Messenger' : 'Email'}
-Lead name: ${name}
-Their message: "${message}"
-Intent: ${intent}
-Budget: ${budget}
-Interest: ${interest}
-
-Write a reply: 3-4 short paragraphs, ask ONE qualifying question at the end, sign off as Sarah.`
-          }
+          { role: 'system', content: 'You are a helpful real estate AI assistant. Be concise and professional.' },
+          { role: 'user', content: prompt }
         ]
       })
     });
     const data = await response.json();
-    return data.choices?.[0]?.message?.content || 'Could not generate reply.';
+    return data.choices?.[0]?.message?.content || 'Could not generate response.';
   } catch (e) {
-    return 'AI reply generation failed.';
+    return 'AI generation failed.';
   }
 }
 
