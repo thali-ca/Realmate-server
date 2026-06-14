@@ -10,7 +10,7 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+const GROQ_KEY = process.env.GROQ_KEY;
 
 // Health check
 app.get('/', (req, res) => {
@@ -21,7 +21,6 @@ app.get('/', (req, res) => {
 app.post('/lead', async (req, res) => {
   const { name, email, source, message, interest, budget, intent, urgency } = req.body;
 
-  // Save lead to Supabase
   const { data: lead, error } = await supabase
     .from('leads')
     .insert([{ name, email, source, message, interest, budget, intent, urgency }])
@@ -30,10 +29,8 @@ app.post('/lead', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  // Generate AI reply
   const aiReply = await generateReply({ name, source, message, interest, budget, intent });
 
-  // Save AI reply
   await supabase
     .from('leads')
     .update({ ai_reply: aiReply })
@@ -56,11 +53,9 @@ app.get('/leads', async (req, res) => {
 // Update lead status
 app.patch('/lead/:id', async (req, res) => {
   const { id } = req.params;
-  const updates = req.body;
-
   const { error } = await supabase
     .from('leads')
-    .update(updates)
+    .update(req.body)
     .eq('id', id);
 
   if (error) return res.status(500).json({ error: error.message });
@@ -69,19 +64,23 @@ app.patch('/lead/:id', async (req, res) => {
 
 async function generateReply({ name, source, message, interest, budget, intent }) {
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_KEY,
-        'anthropic-version': '2023-06-01'
+        'Authorization': `Bearer ${GROQ_KEY}`
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'llama3-8b-8192',
         max_tokens: 1000,
-        messages: [{
-          role: 'user',
-          content: `You are a top real estate agent named Sarah. A new lead just messaged you. Write a warm, helpful reply.
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a top real estate agent named Sarah. Write warm, helpful, human replies to leads. Never sound like a bot.'
+          },
+          {
+            role: 'user',
+            content: `A new lead just messaged you.
 
 Source: ${source === 'fb' ? 'Facebook Messenger' : 'Email'}
 Lead name: ${name}
@@ -90,16 +89,13 @@ Intent: ${intent}
 Budget: ${budget}
 Interest: ${interest}
 
-Rules:
-- Sound human, not like a bot
-- 3-4 short paragraphs max
-- Ask ONE qualifying question at the end
-- Sign off as Sarah`
-        }]
+Write a reply: 3-4 short paragraphs, ask ONE qualifying question at the end, sign off as Sarah.`
+          }
+        ]
       })
     });
     const data = await response.json();
-    return data.content?.[0]?.text || 'Could not generate reply.';
+    return data.choices?.[0]?.message?.content || 'Could not generate reply.';
   } catch (e) {
     return 'AI reply generation failed.';
   }
