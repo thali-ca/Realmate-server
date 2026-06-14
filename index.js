@@ -19,72 +19,46 @@ const supabase = createClient(
 
 const GROQ_KEY = process.env.GROQ_KEY;
 
-// Health check
 app.get('/', (req, res) => {
   res.json({ status: 'RealMate server is running' });
 });
 
-// General AI endpoint — used by dashboard panel
 app.post('/ai', async (req, res) => {
   const { prompt } = req.body;
-  if (!prompt) return res.status(400).json({ error: 'No prompt provided' });
+  if (!prompt) return res.status(400).json({ error: 'No prompt' });
   const reply = await callGroq(prompt);
   res.json({ reply });
 });
 
-// Receive a new lead + generate reply
 app.post('/lead', async (req, res) => {
   const { name, email, source, message, interest, budget, intent, urgency, agent_id } = req.body;
-
   const { data: lead, error } = await supabase
     .from('leads')
     .insert([{ name, email, source, message, interest, budget, intent, urgency, agent_id }])
-    .select()
-    .single();
-
+    .select().single();
   if (error) return res.status(500).json({ error: error.message });
-
-  const aiReply = await callGroq(
-    `You are top real estate agent ${agent_id||'Sarah'}. A new lead messaged you. Write a warm helpful reply.\n\nSource: ${source==='fb'?'Facebook Messenger':'Email'}\nName: ${name}\nMessage: "${message}"\nIntent: ${intent}\nBudget: ${budget}\n\nRules: sound human, 3-4 short paragraphs, ask ONE qualifying question, sign off as Sarah.`
-  );
-
+  const aiReply = await callGroq(`You are top real estate agent Sarah. A lead messaged you. Write a warm helpful reply.\n\nSource: ${source==='fb'?'Facebook':'Email'}\nName: ${name}\nMessage: "${message}"\nIntent: ${intent}\nBudget: ${budget}\n\nRules: sound human, 3-4 paragraphs, ask ONE qualifying question, sign off as Sarah.`);
   await supabase.from('leads').update({ ai_reply: aiReply }).eq('id', lead.id);
-
   res.json({ success: true, lead_id: lead.id, ai_reply: aiReply });
 });
 
-// Get all leads
 app.get('/leads', async (req, res) => {
-  const { data, error } = await supabase
-    .from('leads')
-    .select('*')
-    .order('created_at', { ascending: false });
-
+  const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-// Update lead status
 app.patch('/lead/:id', async (req, res) => {
-  const { id } = req.params;
-  const { error } = await supabase
-    .from('leads')
-    .update(req.body)
-    .eq('id', id);
-
+  const { error } = await supabase.from('leads').update(req.body).eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
 });
 
-// Groq call — used everywhere
 async function callGroq(prompt) {
   try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROQ_KEY}`
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GROQ_KEY}` },
       body: JSON.stringify({
         model: 'llama3-8b-8192',
         max_tokens: 1000,
@@ -94,11 +68,9 @@ async function callGroq(prompt) {
         ]
       })
     });
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || 'Could not generate response.';
-  } catch (e) {
-    return 'AI generation failed.';
-  }
+    const d = await r.json();
+    return d.choices?.[0]?.message?.content || 'Could not generate response.';
+  } catch(e) { return 'AI generation failed.'; }
 }
 
 const PORT = process.env.PORT || 3000;
